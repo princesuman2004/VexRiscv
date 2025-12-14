@@ -28,6 +28,28 @@ trait DBusEncodingService {
   def bypassStore(data : Bits) : Unit
   def loadData() : Bits
 }
+case class Rd3_4096x32() extends BlackBox {
+  val io = new Bundle {
+    // Port 1 (DBUS)
+    val A1   = in UInt(12 bits)
+    val CE1  = in Bool
+    val WEB1 = in Bool
+    val CSB1 = in Bool
+    val I1   = in Bits(32 bits)
+    val O1   = out Bits(32 bits)
+
+    // Port 2 (IBUS)
+    val A2   = in UInt(12 bits)
+    val CE2  = in Bool
+    val WEB2 = in Bool
+    val CSB2 = in Bool
+    val I2   = in Bits(32 bits)
+    val O2   = out Bits(32 bits)
+  }
+
+  noIoPrefix()
+  
+}
 
 
 case class TightlyCoupledDataBus() extends Bundle with IMasterSlave {
@@ -679,28 +701,34 @@ class IBusDBusCachedTightlyCoupledRam(mapping : SizeMapping,
 
   override def build(pipeline: VexRiscv) = {
     val logic = pipeline plug new Area {
-      val ram = Mem(Bits(32 bits), mapping.size.toInt/4)
+      val ram = Rd3_4096x32()
+
       if(ramAsBlackbox) ram.generateAsBlackBox()
       if (hexInit != null) {
         assert(ramOffset != -1)
         initRam(ram, hexInit, ramOffset, allowOverflow = true)
       }
       val d = withDBus generate new Area {
-        dbus.read_data := ram.readWriteSync(
-          address = (dbus.address >> 2).resized,
-          data    = dbus.write_data,
-          enable  = dbus.enable,
-          write   = dbus.write_enable,
-          mask    = dbus.write_mask
-        )
+        dbus.read_data := ram.io.O1
+          ram.io.A1   := (dbus.address >> 2).resized
+ram.io.CE1  := dbus.enable
+ram.io.CSB1 := !dbus.enable
+ram.io.WEB1 := !dbus.write_enable
+ram.io.I1   := dbus.write_data
+
+
+
+        
       }
       val i = withIBus generate new Area {
-        ibus.data := ram.readWriteSync(
-          address = (ibus.address >> 2).resized,
-          data    = B(32 bits, default -> False),
-          enable  = ibus.enable,
-          write   = False
-        )
+       ram.io.A2   := (ibus.address >> 2).resized
+ram.io.CE2  := ibus.enable
+ram.io.CSB2 := !ibus.enable
+ram.io.WEB2 := True   // read-only
+ram.io.I2   := B(32 bits, default -> False)
+
+ibus.data := ram.io.O2
+
       }
     }
   }

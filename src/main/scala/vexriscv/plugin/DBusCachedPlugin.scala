@@ -708,14 +708,37 @@ class IBusDBusCachedTightlyCoupledRam(mapping : SizeMapping,
         assert(ramOffset != -1)
         initRam(ram, hexInit, ramOffset, allowOverflow = true)
       }
-      val d = withDBus generate new Area {
-        dbus.read_data := ram.io.O1
-          ram.io.A1   := (dbus.address >> 2).resized
-ram.io.CE1  := dbus.enable
-ram.io.CSB1 := !dbus.enable
-ram.io.WEB1 := !dbus.write_enable
-ram.io.I1   := dbus.write_data
+val d = withDBus generate new Area {
 
+  ram.io.A1 := (dbus.address >> 2).resized
+  ram.io.CE1 := dbus.enable
+  ram.io.CSB1 := !dbus.enable
+
+  val doWrite = RegNext(dbus.enable && dbus.write_enable) init(False)
+
+  // Capture old word
+  val oldWordReg = Reg(Bits(32 bits)) init(0)
+  when(dbus.enable) {
+    oldWordReg := ram.io.O1
+  }
+
+  // Expand byte mask
+  val byteMask = Bits(32 bits)
+  byteMask := (
+    (dbus.write_mask(0) ? B"8'hFF" | B"8'h00") ##
+    (dbus.write_mask(1) ? B"8'hFF" | B"8'h00") ##
+    (dbus.write_mask(2) ? B"8'hFF" | B"8'h00") ##
+    (dbus.write_mask(3) ? B"8'hFF" | B"8'h00")
+  )
+
+  val mergedWord = (oldWordReg & ~byteMask) | (dbus.write_data & byteMask)
+
+  // Perform write one cycle later
+  ram.io.WEB1 := !doWrite
+  ram.io.I1   := mergedWord
+
+  dbus.read_data := ram.io.O1
+}
 
 
         
